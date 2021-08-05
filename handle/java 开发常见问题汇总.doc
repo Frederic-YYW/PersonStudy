@@ -1,0 +1,783 @@
+Springboot 常见问题汇总
+
+1、“No converter found for return value of type: class xxx”
+或org.springframework.web.HttpMediaTypeNotSupportedException: Content type 'application/json;charset=UTF-8' not supported
+
+	方案一、
+	RestController的意思就是controller里面的方法都以json格式输出
+	public class HelloController {
+
+		@RequestMapping("/getUser")
+		public User getUser() {
+
+			User user=new User("小明","xxx");
+
+			return user;
+		}
+	}
+
+	public class User {
+		private String name;
+		private String passwd;
+		public User(String name,String passwd){
+			this.name = name;
+			this.passwd = passwd;
+		}
+	}
+
+	在pom.xml文件中去配置jackson
+	<properties>
+	<!--jackson版本配置-->
+			<jackson>2.5.4</jackson>
+		</properties>
+
+		<dependencies>
+	<!--配置jackson-->
+        <dependency>
+            <groupId>com.fasterxml.jackson.core</groupId>
+            <artifactId>jackson-core</artifactId>
+            <version>${jackson.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>com.fasterxml.jackson.core</groupId>
+            <artifactId>jackson-databind</artifactId>
+            <version>${jackson.version}</version>
+        </dependency>
+    </dependencies>
+	
+	一般情况下到这就可以运行程序，返回json数据了，但是运行之后才发现，会出现一个“No converter found for return value of type: class xxx“的错误
+
+	通过查找资料发现，处理json对象的类，数据必须要有相关的get和set方法，
+
+	在User.java中加入相应的get和set方法
+
+	 　　public void setUserName(String name){
+			this.name = name;
+		}
+		public void setPassWord(String passwd){
+			this.passwd = passwd;
+		}
+		public String getUserName(){
+			return name;
+		}
+		public String getPassWord(){
+			return passwd;
+		}
+		
+	方案二：删除掉自己写的乱码处理类（亲测有效，完美解决本人遇到的问题）
+		@Bean
+		public HttpMessageConverter<String> responseBodyConverter() {
+			StringHttpMessageConverter converter = new StringHttpMessageConverter(Charset.forName("UTF-8"));
+			return converter;
+		}
+	之前在项目中自己写了一个乱码的处理方法（代码如上所示），因此才出现的找不到对应返回值的问题，原因是springboot自己已经做处理了，但是我自己又加了一遍，导致出现的该错误，所以直接删除掉即可。
+在做一个项目时用到@RequestBody注解为请求信息做封装处理，发现对象中一个字段QQ（文档中请求json串的这个字段名首字母是大写的，风格迥异）被注入为null，没找到什么原因导致的。
+
+2、@RequestBody为JavaBean对象注入字段值为空的解决办法
+spring框架在对对象进行处理的时候还是要拿我们的get/set方法，我们把对象的字段名首字母搞成大写，这让spring在处理的时候到底是为QQ还是qQ这个字段赋值？（spring：我看你就是在刁难我），spring没办法就只能按照传统命名规则，所以字段名首字母为大写的就没法正常注入值了。
+
+那么总得来看，造成注入为null的原因有两个：
+
+1.JavaBean字段名和Json串字段名不一致
+
+2.JavaBean字段名和Json串字段名一致，但首字母大写。
+
+其中第二种情况，也提醒了我们在平时开发中，有些东西就比如这个命名规则还是要按照约定成俗来最好。
+
+但是，文档是那样写的，怎么处理这种情况？实际上spring早已考虑到这种情况，我们只需要用@JsonProperty(value=”QQ”);注解在字段上即可，这样就可以为某些字段赋予例外情况了，或者说你的JavaBean的所有字段名都没跟请求过来的json串吻合，就用这个注解吧
+
+3、Springboot之接收json字符串的两种方式
+配置fastjson
+添加fastjson的依赖到pom.xml中
+
+<dependency>
+   <groupId>com.alibaba</groupId>
+   <artifactId>fastjson</artifactId>
+   <version>${fastjson.version}</version>
+</dependency>
+1、通过@RequestBody 接收json
+直接通过@RequestBody 的方式，直接将json的数据注入到了JSONObject里面了。
+
+@ResponseBody
+@RequestMapping(value = "/json/data", method = RequestMethod.POST, produces = "application/json;charset=UTF-8")
+public String getByJSON(@RequestBody JSONObject jsonParam) {
+    // 直接将json信息打印出来
+    System.out.println(jsonParam.toJSONString());
+
+    // 将获取的json数据封装一层，然后在给返回
+    JSONObject result = new JSONObject();
+    result.put("msg", "ok");
+    result.put("method", "json");
+    result.put("data", jsonParam);
+
+    return result.toJSONString();
+}
+
+2、通过Request获取
+通过request的对象来获取到输入流，然后将输入流的数据写入到字符串里面，最后转化为JSON对象。
+
+@ResponseBody
+@RequestMapping(value = "/request/data", method = RequestMethod.POST, produces = "application/json;charset=UTF-8")
+public String getByRequest(HttpServletRequest request) {
+
+    //获取到JSONObject
+    JSONObject jsonParam = this.getJSONParam(request);
+
+    // 将获取的json数据封装一层，然后在给返回
+    JSONObject result = new JSONObject();
+    result.put("msg", "ok");
+    result.put("method", "request");
+    result.put("data", jsonParam);
+
+    return result.toJSONString();
+}
+
+public JSONObject getJSONParam(HttpServletRequest request){
+    JSONObject jsonParam = null;
+    try {
+        // 获取输入流
+        BufferedReader streamReader = new BufferedReader(new InputStreamReader(request.getInputStream(), "UTF-8"));
+
+        // 写入数据到Stringbuilder
+        StringBuilder sb = new StringBuilder();
+        String line = null;
+        while ((line = streamReader.readLine()) != null) {
+            sb.append(line);
+        }
+        jsonParam = JSONObject.parseObject(sb.toString());
+        // 直接将json信息打印出来
+        System.out.println(jsonParam.toJSONString());
+    } catch (Exception e) {
+        e.printStackTrace();
+    }
+    return jsonParam;
+}
+
+4、@RequestBody配合@Valid 校验入参参数 
+@RestController 
+public class ValiController {
+   @PostMapping(value = "/",produces = "application/json;charset=UTF-8")
+   public User vali(@RequestBody @Valid User user){
+   return user; 
+　　}
+  }
+自定义实体类
+import javax.validation.constraints.Max;
+import javax.validation.constraints.NotBlank;
+import javax.validation.constraints.NotNull;
+ 
+public class User {
+    @NotBlank(message = "这个姓名不能为空")
+    private String name;
+    @NotNull(message = "这个年龄不能为空")
+    @Max(value = 105,message = "太大了")
+    private Integer age;
+
+    public String getName() {
+        return name;
+    }
+
+    public void setName(String name) {
+        this.name = name;
+    }
+
+    public Integer getAge() {
+        return age;
+    }
+
+    public void setAge(Integer age) {
+        this.age = age;
+    }
+}
+5、第四种方式是通过PathVariable注解来绑定请求路径的参数，参考代码如下
+@PathVariable：一般我们使用URI template样式映射使用，即url/{param}这种形式，也就是一般我们使用的GET，DELETE，PUT方法会使用到的，我们可以获取URL后所跟的参数。
+
+
+@RequestMapping( value = "/test4/{a}/{bbb}")
+@ResponseBody
+public String test4( @PathVariable("a") String aaa, @PathVariable String bbb )
+{
+    return aaa+bbb;
+}
+　　
+这种情况简单来说就是URL中采用动态绑定的形式表示。之后在方法中指定的参数通过PathVariable来将请求的URL中的参数绑定到方法参数，在这里不指定PathVariable注解的具体值时按照请求路径动态变量的顺序与注解顺序一致即可注入。如果想指定注入，那么指定PathVariable注解的值与动态变量名一致即可特定注入，比如请求路径是：http://localhost:8080/0919/test4/111/222
+启动主程序，出现如下结果，表明注入成功：
+1111222
+6、SpringBoot-@Async的使用
+
+在SpringBoot环境中，要使用@Async注解，我们需要先在启动类上加上@EnableAsync注解。这个与在SpringBoot中使用@Scheduled注解需要在启动类中加上@EnableScheduling是一样的道理（当然你使用古老的XML配置也是可以的，但是在SpringBoot环境中，建议的是全注解开发），具体原理下面会分析。加上@EnableAsync注解后，如果我们想在调用一个方法的时候开启一个新的线程开始异步操作，我们只需要在这个方法上加上@Async注解，当然前提是，这个方法所在的类必须在Spring环境中。
+
+1、在SpringApplication上添加@EnableAsync
+
+@SpringBootApplication
+@EnableAsync
+public class SpringBootRocketmqApplication {
+ 
+	public static void main(String[] args) {
+		SpringApplication.run(SpringBootRocketmqApplication.class, args);
+	}
+
+2、在需要异步的方法上添加@Async
+ @Async()
+    public void async(){
+        try {
+            TimeUnit.SECONDS.sleep(5);
+            log.info("async>>>>>>>>>>>>>>>>异步输出");
+        } catch (InterruptedException e) {
+            e.printStackTrace();
+        }
+　　}
+　　
+什么情况下会导致@Async异步方法会失效？
+1.调用同一个类下注有@Async异步方法：在spring中像@Async和@Transactional、cache等注解本质使用的是动态代理，其实Spring容器在初始化的时候Spring容器会将含有AOP注解的类对象“替换”为代理对象（简单这么理解），那么注解失效的原因就很明显了，就是因为调用方法的是对象本身而不是代理对象，因为没有经过Spring容器，那么解决方法也会沿着这个思路来解决。
+2.调用的是静态(static )方法
+3.调用(private)私有化方法
+　　
+7、springboot开启事务支持时报代理错误
+问题：
+The bean 'xxx' could not be injected as a 'com.github.service.xx' because it is a JDK dynamic proxy
+先说说问题的来源吧，当前这个问题是我在springboot配置事务时出现的，本来我搭建了一个springboot的web框架后，启动事务配置只需要如下两步即可完成：
+1.在启动类Application类上设置@EnableTransactionManagement，表示启动springboot事务支持
+2.在Service层的实现类中指定的方法上设置@Transactional
+以上简单的两步即可完成，但偏偏在启动后会报如上错误。通过观察控制台报错的原因如下：
+Console描述1：
+Description:
+The bean 'userServiceImpl' could not be injected as a 'com.ysq.springboot.service.Impl.UserServiceImpl' because it is a JDK dynamic proxy that implements:
+com.ysq.springboot.service.UserService
+根据上面描述，它是在我的Action层中，注入userServiceImpl这个Bean时失败,(失败的原因就是我有实现接口，而springboot的事务默认是使用jdk的动态代理，即基于接口）)。到这里我突然明白了，在action层中我注入的Bean是实现类，因此就会报错。于是我将此注入Bean的方式改成了其接口，问题迎刃而解。
+Console描述2：
+Action:
+Consider injecting the bean as one of its interfaces or forcing the use of CGLib-based proxies by setting proxyTargetClass=true on @EnableAsync and/or @EnableCaching.
+在看上面的描述它给了我们解决此问题的方案，说你可以考虑下将action中注入的Bean改成接口方式或者强迫事务使用CGLib代理方式（基于类，即设置proxyTargetClass=True在启动事务管理上@EnableTransactionManagement(proxyTargetClass=True)），这种以CGLib代理方式进行，按照之前写法，我们应该是需要引入相应的cglib库的jar包。而在springboot中已经集成了。但在spring3.2之前是需要引入的;
+假如你是在不想将注入的Bean改成接口方式，非得要用实现类，而且还不想再启动事务时配置proxyTargetClass=true，那么接下来让你知道什么叫厉害，有如下方法：
+在你Service层对应的实现类上配置@Scope(proxyMode = ScopedProxyMode.TARGET_CLASS)注解，表明此类上所有方法上的事务都是CGLib方式代理的，问题照样可以解决。（参考：https://blog.csdn.net/z394642048/article/details/84759331）
+写在最后：这里我需要强调一点，就是网上有些解决此问题都说在properties文件中设置spring.aop.proxy-target-class=true。你要搞清楚我们的问题是在开启springboot事务时出现的哦，虽然和AOP代理过程产生的问题一样，但解决的方式不同额。
+
+8、客户端传输日期格式为yyyy-MM-dd HH:mm:ss格式的字符串，服务端接收为Date类型
+
+服务端接收字段上添加注解:
+@DateTimeFormat(pattern="yyyy-MM-dd HH:mm:ss")
+@JsonFormat(timezone = "GMT+8",pattern = "yyyy-MM-dd HH:mm:ss")
+private Date deviceAt; //设备时间
+
+9、MyBatis之java.lang.UnsupportedOperationException异常解决方案
+
+<select id="getColumnsByTableName" parameterType="String" resultType="java.util.List">
+select t.column_name from user_tab_columns t where t.tableName=#{tableName,jdbcType=VARCHAR}
+</select>
+
+对应的dao接口代码为：
+public List<String> getColumnsByTableName(String tableName);
+
+应该改为：
+<select id="getColumnsByTableName" parameterType="String" resultType="String">      select t.column_name from user_tab_columns t where t.tableName=#{tableName,jdbcType=VARCHAR}</select>
+vi
+原因就在于resultType代表的是List中的元素类型，而不应该是List本身，究其原因就在于被dao中的方法声明（标红出）
+public List<String> getColumnsByTableName(String tableName);
+
+10、Springboot+vue跨域和避免options请求的解决方法
+@Configuration
+public class CustomCORSConfiguration {
+    private CorsConfiguration buildConfig(){
+        CorsConfiguration corsConfiguration = new CorsConfiguration();
+        corsConfiguration.addAllowedHeader("*"); // 允许任何的head头部
+        corsConfiguration.addAllowedOrigin("*"); // 允许任何域名使用
+        corsConfiguration.addAllowedMethod("*"); // 允许任何的请求方法
+        corsConfiguration.setAllowCredentials(true);
+        return corsConfiguration;
+    }
+
+    // 添加CorsFilter拦截器，对任意的请求使用
+    @Bean
+    public CorsFilter corsFilter() {
+        UrlBasedCorsConfigurationSource source = new UrlBasedCorsConfigurationSource();
+        source.registerCorsConfiguration("/**", buildConfig());
+        return new CorsFilter(source);
+    }
+}
+VUE端配置
+为vue增加一个vue的axios请求前置拦截器
+Axios.defaults.timeout = 5000
+Axios.defaults.baseURL = ApiUrl.baseURL
+// Axios.defaults.headers.post['Content-Type'] = 'application/x-www-form-urlencoded'
+Axios.defaults.headers.common['X-Requested-With'] = 'XMLHttpRequest';
+Axios.defaults.withCredentials = true
+
+// http request 拦截器
+Axios.interceptors.request.use(
+  config => {
+    config.headers = {
+      'Content-Type': 'application/json' // 设置很关键
+    }
+    return config
+  },
+  err => {
+    return Promise.reject(err)
+  }
+)
+11、springboot2.0不返回某个字段
+@Data
+public class User implements Serializable{
+    private int id;
+    private String username;
+    @JsonIgnore  //返回时排除掉这个字段
+    private String password;
+    private String token;
+    private String phone;
+    private int status;
+    private Date create_date;
+    private Date update_date;
+}
+Springboot 2.0返回json数据中null字段不显示解决方法
+
+在application.properties中添加
+spring.jackson.default-property-inclusion=non_null
+@Data
+public class CompanyRelationDataVO {
+
+    private String name;
+    private String id;
+    @JsonSerialize(include= JsonSerialize.Inclusion.NON_NULL)
+    private List<CompanyRelationDataVO> list;
+
+}
+12、springboot从数据库中加载出来的时间与数据库中的实际配置不同
+修改mysql 默认配置时区
+spring.datasource.druid.url=jdbc:mysql://192.168.111.231:3306/iristar_iot?serverTimezone=GMT%2B8&useUnicode=true&characterEncoding=UTF-8&autoReconnect=true&useSSL=false
+
+13、Springboot 接收复杂的实体类（内含list），要在集合内部类前加static
+@Data
+@JsonIgnoreProperties(value = { "hibernateLazyInitializer", "handler" })
+public class FeedBackVO {
+    @NotBlank(message = "sn不能为空")
+    private String sn;
+
+    private Integer cmd;
+
+    @DateTimeFormat(pattern = "yyyy-MM-dd HH:mm:ss")
+    @JsonFormat(pattern = "yyyy-MM-dd HH:mm:ss")
+    private Date deviceAt;
+
+    private List<FeedBackCore> data;
+
+    @Data
+    public static class FeedBackCore {
+
+        @NonNull
+        public String id;
+
+        @NonNull
+        public Integer status;
+
+        public FeedBackCore() {
+        }
+
+        public FeedBackCore( String id,  Integer status) {
+            this.id = id;
+            this.status = status;
+        }
+    }
+
+    public FeedBackVO() {
+    }
+
+    public FeedBackVO(String sn, Integer cmd, Date deviceAt, List<FeedBackCore> data) {
+        this.sn = sn;
+        this.cmd = cmd;
+        this.deviceAt = deviceAt;
+        this.data = data;
+    }
+}
+14、springboot 参数校验
+
+
+常用校验注解
+@AssertFalse 校验false@AssertTrue 校验true
+@DecimalMax(value=,inclusive=) 小于等于value，inclusive=true,是小于等于
+@DecimalMin(value=,inclusive=) 与上类似
+@Max(value=) 小于等于value@Min(value=) 大于等于value
+@NotNull  检查Null@Past  检查日期
+@Pattern(regex=,flag=)  正则@Size(min=, max=)  字符串，集合，map限制大小
+@Valid 对po实体类进行校验
+
+//正则表达验证YYYY-MM
+@Pattern(regexp ="/^[0-9]{4}-[1-12]{1,2}$/",message = "查询月份格式必须为'YYYY-MM'")
+private String month;
+
+pattern="/^[0-9]{4}-[1-12]{1,2}-[1-31]{1,2}$/"; //正则表达验证YYYY-MM-dd
+
+pattern="/^((\d{2}(([02468][048])|([13579][26]))[\-\/\s]?((((0?[13578])|(1[02]))[\-\/\s]?((0?[1-9])|([1-2][0-9])|(3[01])))|(((0?[469])|(11))[\-\/\s]?((0?[1-9])|([1-2][0-9])|(30)))|(0?2[\-\/\s]?((0?[1-9])|([1-2][0-9])))))|(\d{2}(([02468][1235679])|([13579][01345789]))[\-\/\s]?((((0?[13578])|(1[02]))[\-\/\s]?((0?[1-9])|([1-2][0-9])|(3[01])))|(((0?[469])|(11))[\-\/\s]?((0?[1-9])|([1-2][0-9])|(30)))|(0?2[\-\/\s]?((0?[1-9])|(1[0-9])|(2[0-8]))))))(\s((([0-1][0-9])|(2?[0-3]))\:([0-5]?[0-9])((\s)|(\:([0-5]?[0-9])))))?$/";//正则表达验证YYYY-mm-dd HH:MM:SS
+
+身份证正则合并=(^\d{15}$)|(^\d{17}([0-9]|X)$)
+
+
+@Pattern(regexp= "[0-9a-z]{8}-[0-9a-z]{4}-[0-9a-z]{4}-[0-9a-z]{4}-[0-9a-z]{12}",message = "主键ID格式有误：UUID格式")
+@NotBlank
+@Pattern(regexp = "^[A-Fa-f0-9]{8}(?:[A-Fa-f0-9]{4}){3}[A-Fa-f0-9]{12}$", message = "companyId 格式有误")
+private String companyId;
+
+
+@Pattern(regexp = "^[\\d]{4}-[\\d]{2}$", message = "查询月份格式必须为'YYYY-MM'")
+private String month;
+
+
+1、集合验证
+@Valid // 嵌套验证必须用@Valid
+@NotNull(message = "props不能为空")
+@Size(min = 1, message = "props至少要有一个自定义属性")
+private List<Prop> props;
+
+2、集合验证
+@NotEmpty(message = "ids不能为空")
+private List<String> ids;
+
+
+Springboot 配置
+ @Pattern(regexp = "^[0-9]{4}-[1-12]{1,2}$", message = "查询月份格式必须为'YYYY-MM'")
+ private String month;
+
+时间日期在application.yml中的配置
+
+修改springboot的application.yml配置文件
+spring:
+  jackson:
+    time-zone: GMT+8
+    date-format: yyyy-MM-dd HH:mm:ss
+
+//等效于在字段上注解
+//    @DateTimeFormat(pattern = "yyyy-MM-dd HH:mm:ss")
+//    @JsonFormat(pattern = "yyyy-MM-dd HH:mm:ss",timezone="GMT+8")
+private Date deviceAt;
+
+@NotEmpty 用在集合类上面
+@NotBlank 用在String上面
+@NotNull    用在基本类型上
+
+15.TIMESTAMP with implicit DEFAULT value is deprecated. Please use --explicit_defaults_for_timestamp server option (see documentation for more details).
+
+配置文件增加
+
+[mysqld]
+explicit_defaults_for_timestamp=true
+16、aop错误 Caused by: java.lang.NoClassDefFoundError: org/aspectj/lang/JoinPoint
+
+public void initData(JoinPoint joinPoint, Object result) {
+
+    Object[] args = joinPoint.getArgs();
+    ResultVO resultVO = (ResultVO) result;
+    List<UploadRecoRecordVO> recoRecordList = (List<UploadRecoRecordVO>) args[0];
+}	
+
+17、生产环境和测试环境的创建
+application.yml是启动服务时，服务器会自动加载的配置文件，创建application-dev.yml代表的是开发环境的配置文件，创建application-prod.yml代表的是生产环境的配置文件，后两个文件在启动服务时，服务器不会自动加载，在Application.yml文件去调用application-dev.yml文件。同理，若active: prod,那么服务在启动时，服务器就会调用application-prod.yml文件。也就是说，在开发环境时，只需将application.yml配置文件配置为"dev",而生产环境时，只需将“dev”改为“prod”就可以了。
+
+18、使用bean时，自动注入属性
+@PropertySource("classpath:application.properties")
+public class JwRequestVO {
+    
+    @Value("${jianwei.account}")
+    private String Account;
+
+    @Value("${jianwei.password}")
+    private String Password;
+}
+18、接口传递中首字母自动转换小写，而接口需要大写字母开始
+import com.fasterxml.jackson.annotation.JsonProperty;
+@JsonProperty("JYSP")
+private String JYSP="";   
+19.关于spring@value注入配置文件值失败的原因
+今天我写了一个system.propertities配置文件定义了一个变量host=localhost。
+
+然后在spring 配置文件中加入了加载配置
+
+在service中这样写
+
+@Value("${host}")
+private static String host;
+但是获取不到，各种查资料，最后发现是static关键字的原因
+
+spring@Value依赖注入是依赖set方法
+
+set方法是普通的对象方法，static变量是类的属性，没有set方法；
+20.@Value注入失败的问题
+1. 第一步检测语法是否正确
+@Value("${test}")
+private String test;
+2.第二步检测配置文件中是否有进行配置
+
+test=test
+3.第三步检测是否增加了@Component注解
+
+   在spring中，使用了spring的注解，那么就需要使用spring来进行管理对象，而不能自己进行new，否则就会导致失败。
+
+4.第四步检测代码中的书写方式
+
+  不要再无参构造器中，进行new对象的操作。否则就会造成@Value注解失败。（本人就是踩到这步坑）。
+
+   初始化上下文可以使用@PostConstruct注解来进行初始化，他会在spring加载完信息后，进行调用并且只调用一次。
+
+正确的使用方式：
+@Data
+@Component
+public class JwRequestVO {
+    //自动注入账号密码
+    @Value("${jianwei.account}")
+    @JsonProperty("Account")
+    private  String Account;
+
+    @Value("${jianwei.password}")
+    @JsonProperty("Password")
+    private String Password;
+
+    @JSONField(name = "param")
+    private Object param;
+
+}
+在调用时，依赖注入
+@Autowired
+private JwRequestVO jwRequestVO;
+19、传递对象参数时让为空的字段不传递
+只要引入
+
+		<dependency>
+			<groupId>org.springframework.boot</groupId>
+			<artifactId>spring-boot-starter-web</artifactId>
+		</dependency>
+即可。
+
+Include值有四种，如下：
+
+Include.Include.ALWAYS （Default / 都参与序列化） 
+Include.NON_DEFAULT（当Value 为默认值的时候不参与，如Int a; 当 a=0 的时候不参与）
+Include.NON_EMPTY（当Value 为“” 或者null 不输出）
+Include.NON_NULL（当Value 为null 不输出）
+20、忽略字段不传递
+问题由来：
+springboot项目中定义了很多类，我们在rest返回中直接返回或者在返回对象中使用这些类，spring已经使用jackson自动帮我们完成这些的to json。但是有时候自动转的json内容太多，或者格式不符合我们的期望，因此需要调整类的to json过程，或者说希望自定义类的json过程。
+
+解决办法：
+使用@JsonIgnoreProperties、@JsonIgnore、@JsonFormat。
+
+@JsonIgnore注解用来忽略某些字段，可以用在变量或者Getter方法上，用在Setter方法时，和变量效果一样。这个注解一般用在我们要忽略的字段上。
+
+@JsonIgnoreProperties(ignoreUnknown = true)，将这个注解写在类上之后，就会忽略类中不存在的字段。这个注解还可以指定要忽略的字段，例如@JsonIgnoreProperties({ “password”, “secretKey” })
+
+@JsonFormat可以帮我们完成格式转换。例如对于Date类型字段，如果不适用JsonFormat默认在rest返回的是long，如果我们使用@JsonFormat(timezone = “GMT+8”, pattern = “yyyy-MM-dd HH:mm:ss”)，就返回"2018-11-16 22:58:15"
+
+具体可以参考官方文档
+https://fasterxml.github.io/jackson-annotations/javadoc/2.6/com/fasterxml/jackson/annotation/JsonIgnoreProperties.html
+@JsonIgnoreProperties与@JsonIgnore的主要区别在于， @JsonIgnoreProperties是类级别的， 而@JsonIgnore是变量和方法级别的。
+
+@JsonIgnoreProperties(value = {"sgxknum", "socialCreditCode","danWeiName","sgtype"})
+public class AddGroupVO {
+
+    private String SGXKNum;             //施工许可证
+    private String DanWeiName;          //单位名称
+    private String SocialCreditCode;    //统一社会信用代码
+    private String SGType;              //单位类型
+}
+21、dockerfile打包遇到
+[ERROR] Failed to execute goal com.spotify:dockerfile-maven-plugin:1.3.6:build (default-cli) on project test: Could not build image: com.spotify.docker.client.shaded.com.fasterxml.jackson.databind.JsonMappingException: Can not construct instance of com.spotify.docker.client.messages.RegistryAuth: no String-argument constructor/factory method to deserialize from String value ('swarm')
+[ERROR]  at [Source: N/A; line: -1, column: -1] (through reference chain: java.util.LinkedHashMap["stackOrchestrator"])
+解决方案：
+pom.xml
+<groupId>com.spotify</groupId>
+<artifactId>docker-maven-plugin</artifactId>
+<version>1.0.0</version>
+删除版本即可
+
+22、[ERROR] The goal you specified requires a project to execute but there is no POM in this directory (C:\Users\yuanyangwen\IdeaProjects\iristar-docker\src\main\resources). Please verify y
+ou invoked Maven from the correct directory. -> [Help 1]
+这个错误的原因是当前目录下没有pom.xml 文件,Maven执行必须要pom.xml文件，所以我就跑到pom.xml文件目录下 mvn install.问题解决
+23、mvn 安装本地jar
+mvn install:install-file -Dfile=C:/Users/yuanyangwen/Desktop/jai_codec-1.1.3.jar -DgroupId=javax.media -DartifactId=jai_core -Dversion=1.1.3 -D
+packaging=jar
+
+24、参数验证出错"HV000032: Unable to initialize org.hibernate.validator.internal.constraintvalidators.hv.LengthValidator.",
+
+@Length(max = 2, min = 2, message = "被采集人民族代码错误")
+
+最大最小值填错了，最大值不能小于最小值
+
+25、jackSon注解– @JsonInclude 注解不返回null值字段
+@Data
+@JsonInclude(JsonInclude.Include.NON_NULL)
+public class ResponseVO<T> {
+    private Integer status;
+    private String msg;
+    private T data;
+
+    public ResponseVO(Integer status, String msg) {
+        this.status = status;
+        this.msg = msg;
+    }
+}
+26、两个实体类嵌套，对象拷贝出错
+can only instantiate non-static inner class by using default, no-argument constructor
+
+解决方法
+问题本质为：内部非静态类无法实例化
+你需要做两件事：
+
+　　　给内部类前面加上static
+　　　给内部类加上默认构造函数
+@Data
+public class UserAttendanceGroupVO {
+
+    private String attGroupId;
+
+    private List<UserAttendanceGroupDetails> list;
+
+    @Data
+    public static class UserAttendanceGroupDetails {
+
+        private String userId;
+
+        private String attGroupId;
+
+        private String orgId;
+
+        private Integer status;
+
+        private String message;
+　　　}
+}
+
+27、接收集合
+public ResultVO userAtteGroupDelete(@RequestBody List<String> ids) {
+
+发送参数为数组 ["C4F418B42B0C47508743FA3905A12C2C","456"]
+
+28、mysql 筛选指定时间段内的数据
+29、select date from <表名> where month(列名)='5' AND extract(hour_minute from <列名>) BETWEEN '600' AND '859
+
+30、javax/xml/ws/WebServiceContext
+　　　Jdk版本错误
+31、springboot工程 Cannot determine embedded database driver class for database type NONE 
+解决：@SpringBootApplication(exclude=DataSourceAutoConfiguration.class)
+
+32、Property 'sqlSessionFactory' or 'sqlSessionTemplate' are required错误详解
+坑一:在Mapper层，它是需要加@Mapper注解的，但是网上又有人加@respository，两个注解混起来了，其实是任选其一都可以的。一般都是使用@Mapper。但是如果在Mapper层中加了注解，在配置主类SpringBootMybatisApplication里面就不需要@MapperScan(“com.example.demo.mapper”)扫描注解，在配置类里加扫描注解的意思是将这个包下所有的都注解成Mapper。
+坑二：使用STS创建的SpringBoot项目，其中配置文件默认的是application.properties，一般在这个文件里面配置数据源。但是这个文件想要起作用，则必须在配置主类中加入@EnableAutoConfiguration(exclude={DataSourceAutoConfiguration.class})自动注入，否则该配置文件中的配置无效。会报出Failed to configure a DataSource: ‘url’ attribute is not specified and no embedded datasource could be configured.错误
+
+33、在编译Maven项目时遇到“'parent.relativePath' points at no local POM”
+将子项目中的中的
+
+<relativePath/>或者<relativePath>..</relativePath>
+或者<relativePath>..</relativePath>
+
+替换为
+<relativePath>../</relativePath>
+
+34、lombok 输出由继承关系的子类属性时，不显示父类属性
+@ToString(callSuper = true)
+
+35、解决Mybatis传递List集合报错 Available parameters are [collection, list]
+完整错误如下：
+org.apache.ibatis.binding.BindingException: Parameter ‘customerIdList’ not found. Available parameters are [collection, list]
+
+解释：
+当我们传递一个 List 实例或者数组作为参数对象传给 MyBatis。当你这么做的时 候,MyBatis 会自动将它包装在一个 Map 中,用名称在作为键。List 实例将会以“list” 作为键,而数组实例将会以“array”作为键。所以，当我们传递的是一个List集合时，mybatis会自动把我们的list集合包装成以list为Key值的map。
+错误代码：
+
+DAO 层：
+Long selectCustomerCountList( List customerIdList);
+
+XML文件：
+<select id="selectCustomerCountList" parameterType="java.util.List" resultType="java.lang.Long">
+        select count(1) from np_customer_info where id in
+        <foreach item="item" collection="customerIdList" separator="," open="(" close=")" index="">  #{item, jdbcType=INTEGER}    
+        </foreach> 
+    </select>
+==========================
+注意：DAO 层接口的参数名与XML 文件中的collection的属性值一致，是导致的问题的主要原因。
+
+解决方法
+第一种：利用Mybatis给我们的封装进行XML配置，将我们的XML中collection属性值设置为list。
+
+DAO 层：
+Long selectCustomerCountList( List customerIdList);
+
+XML文件：
+<select id="selectCustomerCountList" parameterType="java.util.List" resultType="java.lang.Long">
+        select count(1) from np_customer_info where id in
+        <foreach item="item" collection="list" separator="," open="(" close=")" index="">  #{item, jdbcType=INTEGER}    
+        </foreach> 
+    </select>
+======================
+注意：此时collection强制指定为list且不可改变
+
+第二种： 利用注解@Param指定我们的入参名称
+
+DAO层：
+Long selectCustomerCountList(@Param("customerIdList") List customerIdList);
+
+XML文件：
+<select id="selectCustomerCountList" parameterType="java.util.List" resultType="java.lang.Long">
+        select count(1) from np_customer_info where id in
+        <foreach item="item" collection="customerIdList" separator="," open="(" close=")" index="">  #{item, jdbcType=INTEGER}    
+        </foreach> 
+    </select>
+
+======================
+注意： 此时的DAO层参数名可以 @Param("customerIdList") 与 collection的属性值一致
+
+第三种：将我们的List包装成Map参数进行传递
+
+在Service业务处理层次上面将参数进行包装
+public Long selectCustomerCountMap(List customerIdList) {   
+        Map maps = new HashMap();
+        maps.put("customerIds", customerIdList);
+        return customerMapper.selectCustomerCountMap(maps);
+    }
+    DAO层：
+    Long selectCustomerCountMap(Map maps);
+XML文件：
+
+<select id="selectCustomerCountMap" parameterType="java.util.Map" resultType="java.lang.Long">
+        select count(1) from np_customer_info where id in
+        <foreach item="item" collection="customerIds" separator="," open="(" close=")" index="">  #{item, jdbcType=INTEGER}    
+        </foreach> 
+    </select>
+==============
+注意： 入参类型是java.util.Map而不再是List ,此时的collection属性值为Map中的Key值。
+
+36、解决spring循环依赖的问题：has been injected into other beans
+　　　造成原因：shiro
+　　　首先说一下什么是依赖循环，比如：我现在有一个ServiceA需要调用ServiceB的方法，那么ServiceA就依赖于ServiceB，那在ServiceB中再调用ServiceA的方法，就形成了循环依赖。Spring在初始化bean的时候就不知道先初始化哪个bean就会报错。
+
+      当然， 最好的解决办法是进行解耦。但，如果改动比较大，可以在你的配置文件中，在互相依赖的两个bean的任意一个加上lazy-init属性 或者在你注意bean 的时候，在互相依赖的两个bean上加上@Lazy注解也可以。
+
+ @Autowired @Lazy private ClassA classA;
+ @Autowired @Lazy private ClassB classB
+
+37、RequestContextHolder.getRequestAttributes()空指针问题
+
+**
+ * request上下文工具类
+ * 
+ */
+public class HttpContextUtils {
+
+	public static HttpServletRequest getHttpServletRequest() {
+		return ((ServletRequestAttributes) RequestContextHolder.getRequestAttributes()).getRequest();
+	}
+
+	public static String getDomain() {
+		HttpServletRequest request = getHttpServletRequest();
+		StringBuffer url = request.getRequestURL();
+		return url.delete(url.length() - request.getRequestURI().length(), url.length()).toString();
+	}
+
+	public static String getOrigin() {
+		HttpServletRequest request = getHttpServletRequest();
+		return request.getHeader("Origin");
+	}
+}
+但是在调用这个工具获取HttpServletRequest的时候报了空指针异常，经过排查是RequestContextHolder.getRequestAttributes()获取到的ServletRequestAttributes为null
+最后在启动类中加入以下代码即可解决报空指针的问题
+
+@Bean
+public RequestContextListener requestContextListener(){
+	    return new RequestContextListener();
+	} 
